@@ -1,0 +1,15 @@
+{
+  "name": "n64-multiplayer-server",
+  "version": "1.0.0",
+  "description": "N64 Multiplayer Room Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  }
+}
