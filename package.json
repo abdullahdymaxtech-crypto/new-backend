@@ -1,15 +1,15 @@
 {
-  "name": "n64-multiplayer-server",
-  "version": "1.0.0",
-  "description": "N64 Multiplayer Room Server",
+  "name": "n64-multiplayer-backend",
+  "version": "2.0.0",
+  "description": "N64 Multiplayer Backend with WebSocket Relay and Voice Chat",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "cors": "^2.8.6",
-    "express": "^5.2.1"
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "ws": "^8.16.0"
   }
 }
