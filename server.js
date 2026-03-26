@@ -250,24 +250,33 @@ wss.on("connection", (ws, req) => {
         // ============================================
         // TCP TUNNEL MODE: forward raw bytes directly
         // ============================================
-        if (isTcpTunnel) {
-            const tunnel = tcpTunnels[clientRoomCode];
-            if (!tunnel) return;
+let tunnel = null;
 
-            // Determine target WebSocket
-            let targetWs = null;
-            if (tunnelRole === "host" && tunnel.clientWs) {
-                targetWs = tunnel.clientWs;
-            } else if (tunnelRole === "client" && tunnel.hostWs) {
-                targetWs = tunnel.hostWs;
-            }
+for (const code in tcpTunnels) {
+    const t = tcpTunnels[code];
+    if (t.hostWs === ws || t.clientWs === ws) {
+        tunnel = t;
+        break;
+    }
+}
 
-            if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-                console.log(`[Tunnel ${clientRoomCode}] ${tunnelRole}→peer: ${data.length}B buf=${targetWs.bufferedAmount}`);
-                targetWs.send(data, { binary: true, compress: false });
-            }
-            return;
-        }
+if (tunnel && (Buffer.isBuffer(data) || data instanceof ArrayBuffer)) {
+
+    let targetWs = null;
+
+    if (tunnel.hostWs === ws && tunnel.clientWs) {
+        targetWs = tunnel.clientWs;
+    } else if (tunnel.clientWs === ws && tunnel.hostWs) {
+        targetWs = tunnel.hostWs;
+    }
+
+    if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+        console.log(`[FORWARD] ${data.length} bytes`);
+        targetWs.send(data, { binary: true, compress: false });
+    }
+
+    return;
+}
 
         // ============================================
         // NORMAL MODE: JSON control messages + voice
