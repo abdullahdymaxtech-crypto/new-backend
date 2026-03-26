@@ -246,16 +246,16 @@ wss.on("connection", (ws, req) => {
         ws._socket.setNoDelay(true);
     }
 
-ws.on("message", (data) => {
+    ws.on("message", (data) => {
+        // ============================================
+        // TCP TUNNEL MODE: forward raw bytes directly
+        // ============================================
+        if (isTcpTunnel) {
+            const tunnel = tcpTunnels[clientRoomCode];
+            if (!tunnel) return;
 
-    // ✅ 1. HANDLE BINARY FIRST
-    if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
-
-        const tunnel = tcpTunnels[clientRoomCode];
-
-        if (tunnel) {
+            // Determine target WebSocket
             let targetWs = null;
-
             if (tunnelRole === "host" && tunnel.clientWs) {
                 targetWs = tunnel.clientWs;
             } else if (tunnelRole === "client" && tunnel.hostWs) {
@@ -263,22 +263,63 @@ ws.on("message", (data) => {
             }
 
             if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-                console.log(`[FIXED] Forward binary ${data.length} bytes`);
+                console.log(`[Tunnel ${clientRoomCode}] ${tunnelRole}→peer: ${data.length}B buf=${targetWs.bufferedAmount}`);
                 targetWs.send(data, { binary: true, compress: false });
             }
+            return;
         }
 
-        return;
-    }
+        // ============================================
+        // NORMAL MODE: JSON control messages + voice
+        // ============================================
+        try {
+            let msg;
 
-    // ✅ 2. HANDLE JSON PROPERLY
-    try {
-        const msg = JSON.parse(data.toString());
-        handleControlMessage(ws, msg);
-    } catch (e) {
-        console.error("JSON parse error:", e.message);
-    }
-});
+            if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
+                const bytes =
+                    data instanceof ArrayBuffer
+                        ? Buffer.from(data)
+                        : data;
+
+                const msgType = bytes[0];
+
+                if (msgType === 0x01 || msgType === 0x02) {
+                    if (clientRoomCode && rooms[clientRoomCode]) {
+                        const room = rooms[clientRoomCode];
+                        room.wsClients.forEach((client, pid) => {
+                            if (
+                                pid !== clientPlayerId &&
+                                client.ws &&
+                                client.ws.readyState === WebSocket.OPEN
+                            ) {
+                                client.ws.send(data, { binary: true });
+                            }
+                        });
+                    }
+                    return;
+                }
+
+                msg = JSON.parse(bytes.toString("utf8"));
+            } else {
+                msg = JSON.parse(data);
+            }
+
+            handleControlMessage(ws, msg);
+        } catch (e) {
+            if (clientRoomCode && rooms[clientRoomCode]) {
+                const room = rooms[clientRoomCode];
+                room.wsClients.forEach((client, pid) => {
+                    if (
+                        pid !== clientPlayerId &&
+                        client.ws &&
+                        client.ws.readyState === WebSocket.OPEN
+                    ) {
+                        client.ws.send(data, { binary: true });
+                    }
+                });
+            }
+        }
+    });
 
     function handleControlMessage(ws, msg) {
         switch (msg.type) {
@@ -338,33 +379,26 @@ ws.on("message", (data) => {
                     peerConnected: role === "host" ? tunnel.clientReady : tunnel.hostReady,
                 }));
 
-  if (tunnel.hostReady && tunnel.clientReady) {
-    console.log(`[Tunnel ${roomCode}] ACTIVE`);
+                if (tunnel.hostReady && tunnel.clientReady) {
+                    console.log(`[Tunnel ${roomCode}] Both sides connected, tunnel is ACTIVE`);
 
-    const msgHost = JSON.stringify({
-        type: "tcp_tunnel_status",
-        status: "active",
-        role: "host",
-        peerConnected: true,
-    });
-
-    const msgClient = JSON.stringify({
-        type: "tcp_tunnel_status",
-        status: "active",
-        role: "client",
-        peerConnected: true,
-    });
-
-    // 🔥 send with slight delay (CRITICAL)
-    setTimeout(() => {
-        if (tunnel.hostWs?.readyState === WebSocket.OPEN) {
-            tunnel.hostWs.send(msgHost);
-        }
-        if (tunnel.clientWs?.readyState === WebSocket.OPEN) {
-            tunnel.clientWs.send(msgClient);
-        }
-    }, 100); // small delay fixes race condition
-}
+                    if (tunnel.hostWs && tunnel.hostWs.readyState === WebSocket.OPEN) {
+                        tunnel.hostWs.send(JSON.stringify({
+                            type: "tcp_tunnel_status",
+                            status: "active",
+                            role: "host",
+                            peerConnected: true,
+                        }));
+                    }
+                    if (tunnel.clientWs && tunnel.clientWs.readyState === WebSocket.OPEN) {
+                        tunnel.clientWs.send(JSON.stringify({
+                            type: "tcp_tunnel_status",
+                            status: "active",
+                            role: "client",
+                            peerConnected: true,
+                        }));
+                    }
+                }
 
                 break;
             }
