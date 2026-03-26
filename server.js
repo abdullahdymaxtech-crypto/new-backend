@@ -246,16 +246,16 @@ wss.on("connection", (ws, req) => {
         ws._socket.setNoDelay(true);
     }
 
-    ws.on("message", (data) => {
-        // ============================================
-        // TCP TUNNEL MODE: forward raw bytes directly
-        // ============================================
-        if (isTcpTunnel) {
-            const tunnel = tcpTunnels[clientRoomCode];
-            if (!tunnel) return;
+ws.on("message", (data) => {
 
-            // Determine target WebSocket
+    
+    if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
+
+        const tunnel = tcpTunnels[clientRoomCode];
+
+        if (tunnel) {
             let targetWs = null;
+
             if (tunnelRole === "host" && tunnel.clientWs) {
                 targetWs = tunnel.clientWs;
             } else if (tunnelRole === "client" && tunnel.hostWs) {
@@ -263,63 +263,13 @@ wss.on("connection", (ws, req) => {
             }
 
             if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-                console.log(`[Tunnel ${clientRoomCode}] ${tunnelRole}→peer: ${data.length}B buf=${targetWs.bufferedAmount}`);
+                console.log(`[FIXED] Forward binary ${data.length} bytes`);
                 targetWs.send(data, { binary: true, compress: false });
             }
-            return;
         }
 
-        // ============================================
-        // NORMAL MODE: JSON control messages + voice
-        // ============================================
-        try {
-            let msg;
-
-            if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
-                const bytes =
-                    data instanceof ArrayBuffer
-                        ? Buffer.from(data)
-                        : data;
-
-                const msgType = bytes[0];
-
-                if (msgType === 0x01 || msgType === 0x02) {
-                    if (clientRoomCode && rooms[clientRoomCode]) {
-                        const room = rooms[clientRoomCode];
-                        room.wsClients.forEach((client, pid) => {
-                            if (
-                                pid !== clientPlayerId &&
-                                client.ws &&
-                                client.ws.readyState === WebSocket.OPEN
-                            ) {
-                                client.ws.send(data, { binary: true });
-                            }
-                        });
-                    }
-                    return;
-                }
-
-                msg = JSON.parse(bytes.toString("utf8"));
-            } else {
-                msg = JSON.parse(data);
-            }
-
-            handleControlMessage(ws, msg);
-        } catch (e) {
-            if (clientRoomCode && rooms[clientRoomCode]) {
-                const room = rooms[clientRoomCode];
-                room.wsClients.forEach((client, pid) => {
-                    if (
-                        pid !== clientPlayerId &&
-                        client.ws &&
-                        client.ws.readyState === WebSocket.OPEN
-                    ) {
-                        client.ws.send(data, { binary: true });
-                    }
-                });
-            }
-        }
-    });
+        return;
+    }
 
     function handleControlMessage(ws, msg) {
         switch (msg.type) {
