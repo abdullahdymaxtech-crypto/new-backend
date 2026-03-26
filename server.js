@@ -338,26 +338,33 @@ ws.on("message", (data) => {
                     peerConnected: role === "host" ? tunnel.clientReady : tunnel.hostReady,
                 }));
 
-                if (tunnel.hostReady && tunnel.clientReady) {
-                    console.log(`[Tunnel ${roomCode}] Both sides connected, tunnel is ACTIVE`);
+  if (tunnel.hostReady && tunnel.clientReady) {
+    console.log(`[Tunnel ${roomCode}] ACTIVE`);
 
-                    if (tunnel.hostWs && tunnel.hostWs.readyState === WebSocket.OPEN) {
-                        tunnel.hostWs.send(JSON.stringify({
-                            type: "tcp_tunnel_status",
-                            status: "active",
-                            role: "host",
-                            peerConnected: true,
-                        }));
-                    }
-                    if (tunnel.clientWs && tunnel.clientWs.readyState === WebSocket.OPEN) {
-                        tunnel.clientWs.send(JSON.stringify({
-                            type: "tcp_tunnel_status",
-                            status: "active",
-                            role: "client",
-                            peerConnected: true,
-                        }));
-                    }
-                }
+    const msgHost = JSON.stringify({
+        type: "tcp_tunnel_status",
+        status: "active",
+        role: "host",
+        peerConnected: true,
+    });
+
+    const msgClient = JSON.stringify({
+        type: "tcp_tunnel_status",
+        status: "active",
+        role: "client",
+        peerConnected: true,
+    });
+
+    // 🔥 send with slight delay (CRITICAL)
+    setTimeout(() => {
+        if (tunnel.hostWs?.readyState === WebSocket.OPEN) {
+            tunnel.hostWs.send(msgHost);
+        }
+        if (tunnel.clientWs?.readyState === WebSocket.OPEN) {
+            tunnel.clientWs.send(msgClient);
+        }
+    }, 100); // small delay fixes race condition
+}
 
                 break;
             }
