@@ -71,11 +71,82 @@ function cleanupTunnel(code) {
 
 // ==========================================
 // REST API Endpoints
-// ==========================================
+
+app.post("/join-room", (req, res) => {
+    const { code, name } = req.body;
+    const room = rooms[code];
+
+    if (!room) return res.status(404).json({ error: "room not found" });
+    if (room.players.length >= 4)
+        return res.status(400).json({ error: "room full" });
+
+    const playerId = generateId();
+    const slot = room.players.length + 1;
+    
+    // FIX: Extract FIRST IP from x-forwarded-for header (it can be comma-separated)
+    let joinerPublicIp = req.headers["x-forwarded-for"] || req.ip;
+    if (joinerPublicIp && joinerPublicIp.includes(",")) {
+        joinerPublicIp = joinerPublicIp.split(",")[0].trim();
+    }
+    // Remove IPv6 prefix if present
+    if (joinerPublicIp && joinerPublicIp.startsWith("::ffff:")) {
+        joinerPublicIp = joinerPublicIp.substring(7);
+    }
+
+    const player = {
+        id: playerId,
+        name: name || "Player",
+        slot,
+        publicIp: joinerPublicIp,
+    };
+    room.players.push(player);
+
+    // FIX: Get host's IP the same way
+    let hostPublicIp = room.players[0].publicIp;
+    if (hostPublicIp && hostPublicIp.startsWith("::ffff:")) {
+        hostPublicIp = hostPublicIp.substring(7);
+    }
+
+    // FIX: Better comparison - same IP = same network = LAN mode
+    const sameNetwork = (hostPublicIp === joinerPublicIp);
+    
+    if (!sameNetwork) {
+        room.useRelay = true;
+        console.log(
+            `Room ${code}: DIFFERENT networks detected (host=${hostPublicIp} vs joiner=${joinerPublicIp}), RELAY enabled`
+        );
+    } else {
+        console.log(
+            `Room ${code}: SAME network detected (${hostPublicIp}), LAN mode`
+        );
+    }
+
+    console.log(
+        `Player ${name || "Player"} joined room ${code} as slot ${slot}, useRelay=${room.useRelay}`
+    );
+
+    res.json({
+        playerId,
+        slot,
+        hostIp: room.hostIp,
+        hostPort: room.hostPort,
+        useRelay: room.useRelay,
+    });
+});
+
 app.post("/create-room", (req, res) => {
     const code = generateCode();
     const playerId = generateId();
     const { hostIp, hostPort } = req.body;
+
+    // FIX: Extract FIRST IP and clean it
+    let publicIp = req.headers["x-forwarded-for"] || req.ip;
+    if (publicIp && publicIp.includes(",")) {
+        publicIp = publicIp.split(",")[0].trim();
+    }
+    if (publicIp && publicIp.startsWith("::ffff:")) {
+        publicIp = publicIp.substring(7);
+    }
 
     rooms[code] = {
         code,
@@ -90,14 +161,14 @@ app.post("/create-room", (req, res) => {
                 id: playerId,
                 name: "Host",
                 slot: 1,
-                publicIp: req.headers["x-forwarded-for"] || req.ip,
+                publicIp: publicIp,  // Use cleaned IP
             },
         ],
         wsClients: new Map(),
         gameFrames: [],
     };
 
-    console.log(`Room ${code} created by ${playerId}, hostIp=${hostIp}`);
+    console.log(`Room ${code} created by ${playerId}, hostIp=${hostIp}, publicIp=${publicIp}`);
     res.json({
         code,
         playerId,
@@ -106,46 +177,7 @@ app.post("/create-room", (req, res) => {
     });
 });
 
-app.post("/join-room", (req, res) => {
-    const { code, name } = req.body;
-    const room = rooms[code];
 
-    if (!room) return res.status(404).json({ error: "room not found" });
-    if (room.players.length >= 4)
-        return res.status(400).json({ error: "room full" });
-
-    const playerId = generateId();
-    const slot = room.players.length + 1;
-    const joinerPublicIp = req.headers["x-forwarded-for"] || req.ip;
-
-    const player = {
-        id: playerId,
-        name: name || "Player",
-        slot,
-        publicIp: joinerPublicIp,
-    };
-    room.players.push(player);
-
-    const hostPublicIp = room.players[0].publicIp;
-    if (hostPublicIp !== joinerPublicIp) {
-        room.useRelay = true;
-        console.log(
-            `Room ${code}: Different networks detected (${hostPublicIp} vs ${joinerPublicIp}), relay enabled`
-        );
-    }
-
-    console.log(
-        `Player ${name || "Player"} joined room ${code} as slot ${slot}, relay=${room.useRelay}`
-    );
-
-    res.json({
-        playerId,
-        slot,
-        hostIp: room.hostIp,
-        hostPort: room.hostPort,
-        useRelay: room.useRelay,
-    });
-});
 
 app.get("/room/:code", (req, res) => {
     const code = req.params.code;
