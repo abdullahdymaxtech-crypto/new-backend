@@ -275,7 +275,7 @@ app.get("/join/:code", (req, res) => {
     res.set("Content-Type", "text/html").send(`<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Join a Yester game</title>
+<title>Join a YesterGames</title>
 <style>
   body{font-family:system-ui,sans-serif;background:#012070;color:#fff;display:flex;min-height:100vh;
        margin:0;align-items:center;justify-content:center}
@@ -295,6 +295,7 @@ app.get("/join/:code", (req, res) => {
   </script>
 </div></body></html>`);
 });
+
 
 // ==========================================
 // WebSocket handling
