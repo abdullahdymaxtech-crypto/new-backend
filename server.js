@@ -262,6 +262,39 @@ app.get("/health", (req, res) => {
         uptime: process.uptime(),
     });
 });
+const APK_DRIVE_ID = "15dSCOUy59Tr6bCZOhliebJNPgGk3EWWF"; // <-- update if the APK changes
+const APK_DOWNLOAD_URL = `https://drive.google.com/uc?export=download&id=${APK_DRIVE_ID}`;
+
+app.get("/download", (req, res) => res.redirect(APK_DOWNLOAD_URL));
+
+app.get("/join/:code", (req, res) => {
+    const code = String(req.params.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+    const gameId = String(req.query.g || "").replace(/[^a-z0-9-]/gi, "");
+    const appUrl = "yestergames://join/" + encodeURIComponent(code) + (gameId ? "?g=" + encodeURIComponent(gameId) : "");
+
+    res.set("Content-Type", "text/html").send(`<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Join a Yester game</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#012070;color:#fff;display:flex;min-height:100vh;
+       margin:0;align-items:center;justify-content:center}
+  .box{text-align:center;padding:24px;max-width:360px}
+  h1{font-size:22px;margin:0 0 8px} p{color:#ccd7ff}
+  .code{font-size:30px;letter-spacing:8px;font-weight:700;margin:14px 0}
+  .btn{display:inline-block;margin-top:18px;padding:14px 28px;border-radius:10px;background:#FDAC00;
+       color:#012070;font-weight:700;text-decoration:none}
+</style></head><body><div class="box">
+  <h1>Opening your game…</h1>
+  <p>If the app doesn't open, install it, then open this link again<br/>or enter this code in the app → JOIN:</p>
+  <div class="code">${code}</div>
+  <a class="btn" href="/download">Download the app</a>
+  <script>
+    // Try to launch the installed app (no domain verification needed).
+    setTimeout(function(){ window.location = ${JSON.stringify(appUrl)}; }, 100);
+  </script>
+</div></body></html>`);
+});
 
 // ==========================================
 // WebSocket handling
