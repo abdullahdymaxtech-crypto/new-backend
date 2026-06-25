@@ -7,6 +7,57 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ==========================================
+// MongoDB users + email/password auth
+// ==========================================
+const crypto = require("crypto");
+const { MongoClient } = require("mongodb");
+
+const MONGO_URI = process.env.MONGO_URI;
+let usersCol = null;
+
+function hashPassword(password) {
+    const salt = crypto.randomBytes(16).toString("hex");
+    const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+    return `${salt}:${hash}`;
+}
+function verifyPassword(password, stored) {
+    if (!stored || !stored.includes(":")) return false;
+    const [salt, hash] = stored.split(":");
+    const test = crypto.scryptSync(password, salt, 64).toString("hex");
+    const a = Buffer.from(hash, "hex");
+    const b = Buffer.from(test, "hex");
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+async function initMongo() {
+    if (!MONGO_URI) {
+        console.warn("MONGO_URI not set — /login and /register are disabled");
+        return;
+    }
+    const client = new MongoClient(MONGO_URI);
+    await client.connect();
+    usersCol = client.db("yestergames").collection("users");
+    await usersCol.createIndex({ email: 1 }, { unique: true });
+
+    if ((await usersCol.countDocuments()) === 0) {
+        const demo = [
+            ["player1@yester.games", "play1234", "Player One"],
+            ["player2@yester.games", "play1234", "Player Two"],
+            ["player3@yester.games", "play1234", "Player Three"],
+            ["player4@yester.games", "play1234", "Player Four"],
+            ["player5@yester.games", "play1234", "Player Five"],
+            ["demo@yester.games",    "demo1234", "Demo User"],
+        ];
+        await usersCol.insertMany(demo.map(([email, pw, name]) => ({
+            email: email.toLowerCase(), name, password: hashPassword(pw), createdAt: Date.now(),
+        })));
+        console.log("Seeded 6 demo users");
+    }
+    console.log("MongoDB connected — auth ready");
+}
+initMongo().catch((e) => console.error("Mongo init failed:", e.message));
+
 const server = http.createServer(app);
 
 // ==========================================
@@ -131,13 +182,14 @@ app.post("/join-room", (req, res) => {
         hostIp: room.hostIp,
         hostPort: room.hostPort,
         useRelay: room.useRelay,
+        game: room.game || "",
     });
 });
 
 app.post("/create-room", (req, res) => {
     const code = generateCode();
     const playerId = generateId();
-    const { hostIp, hostPort } = req.body;
+    const { hostIp, hostPort, game } = req.body;
 
     // FIX: Extract FIRST IP and clean it
     let publicIp = req.headers["x-forwarded-for"] || req.ip;
@@ -152,6 +204,7 @@ app.post("/create-room", (req, res) => {
         code,
         hostIp: hostIp || req.ip,
         hostPort: hostPort || 45000,
+        game: game || "",
         started: false,
         hostId: playerId,
         createdAt: Date.now(),
@@ -174,6 +227,7 @@ app.post("/create-room", (req, res) => {
         playerId,
         hostIp: rooms[code].hostIp,
         hostPort: rooms[code].hostPort,
+        game: rooms[code].game,
     });
 });
 
@@ -191,6 +245,7 @@ app.get("/room/:code", (req, res) => {
         started: room.started,
         hostId: room.hostId,
         useRelay: room.useRelay,
+        game: room.game || "",
         players: room.players.map((p) => ({
             id: p.id,
             name: p.name,
@@ -262,6 +317,41 @@ app.get("/health", (req, res) => {
         uptime: process.uptime(),
     });
 });
+
+// ==========================================
+// AUTH: register + login (users in MongoDB)
+// ==========================================
+app.post("/register", async (req, res) => {
+    try {
+        if (!usersCol) return res.status(503).json({ error: "auth unavailable" });
+        let { email, password, name } = req.body || {};
+        if (!email || !password) return res.status(400).json({ error: "email and password required" });
+        email = String(email).trim().toLowerCase();
+        if (await usersCol.findOne({ email })) return res.status(409).json({ error: "email already registered" });
+        const finalName = name || email.split("@")[0];
+        await usersCol.insertOne({ email, name: finalName, password: hashPassword(password), createdAt: Date.now() });
+        res.json({ ok: true, email, name: finalName });
+    } catch (e) {
+        res.status(500).json({ error: "server error" });
+    }
+});
+
+app.post("/login", async (req, res) => {
+    try {
+        if (!usersCol) return res.status(503).json({ error: "auth unavailable" });
+        let { email, password } = req.body || {};
+        if (!email || !password) return res.status(400).json({ error: "email and password required" });
+        email = String(email).trim().toLowerCase();
+        const user = await usersCol.findOne({ email });
+        if (!user || !verifyPassword(password, user.password)) {
+            return res.status(401).json({ error: "invalid credentials" });
+        }
+        res.json({ ok: true, email: user.email, name: user.name });
+    } catch (e) {
+        res.status(500).json({ error: "server error" });
+    }
+});
+
 const APK_DRIVE_ID = "15dSCOUy59Tr6bCZOhliebJNPgGk3EWWF"; // <-- update if the APK changes
 const APK_DOWNLOAD_URL = `https://drive.google.com/uc?export=download&id=${APK_DRIVE_ID}`;
 
@@ -271,6 +361,26 @@ app.get("/join/:code", (req, res) => {
     const code = String(req.params.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
     const gameId = String(req.query.g || "").replace(/[^a-z0-9-]/gi, "");
     const appUrl = "yestergames://join/" + encodeURIComponent(code) + (gameId ? "?g=" + encodeURIComponent(gameId) : "");
+
+    // iPhone/iPad (Safari) users: the app is Android-only for now → show a "coming soon" splash.
+    const ua = req.headers["user-agent"] || "";
+    if (/iPhone|iPad|iPod/i.test(ua)) {
+        return res.set("Content-Type", "text/html").send(`<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>YesterGames — iPhone coming soon</title>
+<style>
+  body{font-family:-apple-system,system-ui,sans-serif;background:#012070;color:#fff;display:flex;
+       min-height:100vh;margin:0;align-items:center;justify-content:center}
+  .box{text-align:center;padding:24px;max-width:360px}
+  h1{font-size:24px;margin:0 0 10px;color:#FDAC00}
+  p{color:#ccd7ff;font-size:16px;line-height:1.5}
+</style></head><body><div class="box">
+  <h1>iPhone support is coming soon</h1>
+  <p>YesterGames isn't available on iPhone yet — we're working on it.
+     For now, please open your invite on an Android device.</p>
+</div></body></html>`);
+    }
 
     res.set("Content-Type", "text/html").send(`<!DOCTYPE html>
 <html lang="en"><head>
